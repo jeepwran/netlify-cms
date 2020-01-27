@@ -1,4 +1,4 @@
-import { Base64 } from 'js-base64';
+﻿import { Base64 } from 'js-base64';
 import { uniq, initial, last, get, find, hasIn, partial, result } from 'lodash';
 import {
   localForage,
@@ -36,8 +36,9 @@ export default class API {
       // create a PAT = personal access token in dev.azure and use that as password
       // see https://majgis.github.io/2017/09/13/Create-Authorization-Basic-Header/ how to create base64 string for basic auth
       // or in FF/Chrom-console > btoa('username@something.com:thisIsMyVeryLongPersonalAccessToken')
-      baseHeader.Authorization = 'Basic Y--generate-your-own-auth-string-with-username-and-personal-access-token-base64-encoded-Q==';
-    	console.log('** DEBUG azure' +  baseHeader.Authorization );
+      // baseHeader.Authorization = 'Basic Y--generate-your-own-auth-string-with-username-and-personal-access-token-base64-encoded-Q==';
+      baseHeader.Authorization = 'Basic Y2hyaXN0b3BoLm1huuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuwcQ==';
+    	// console.log('** DEBUG azure' +  baseHeader.Authorization );
       return baseHeader;
     }
 
@@ -66,7 +67,7 @@ export default class API {
     if (params.length) {
       pathext = `${params.join('&')}`;
     }
-    if (path.match(/^https/)) { // Azure specific - path may already be a fully qualified URL 
+    if (path.startsWith('https')) { // Azure specific - path may already be a fully qualified URL 
       path +=  `?${pathext}`; // assume we have already one divider '?'
     } else {
       path = this.api_root + path +  `?${pathext}`;
@@ -107,41 +108,39 @@ export default class API {
   }
 
   checkMetadataRef() {
-    return this.request(`${this.repoURL}/git/refs/meta/_netlify_cms?${Date.now()}`, { // TODO: rework for Azure
+    console.log('** DEBUG entering  checkMetadataRef');
+    // return this.request(`${this.repoURL}/git/refs/meta/_netlify_cms?${Date.now()}`, { // TODO: rework for Azure
+    return this.request(`${this.repoURL}/refs?ts=${Date.now()}`, { // Azure
+      params: { filter: 'heads/meta/_netlify_cms' },
+      // params: { filter: 'heads/cms/2019-05-29-neu102mai' },
       cache: 'no-store',
     })
-      .then(response => response.object)
-      .catch(() => {
-        // Meta ref doesn't exist
+    // .then(response => response.object)
+    .then(response => {
+      if (  response.count  > 0 ) {
+        console.log('** DEBUG return /refs:' + JSON.stringify(response));
+      } else {
+        console.log('** DEBUG return /refs: empty set' );
         const readme = {
-        //  raw:
-        //    '# Netlify CMS\n\nThis tree is used by the Netlify CMS to store metadata information for specific files and branches.',
+          raw:
+            '# Netlify CMS\n\nThis tree is used by the Netlify CMS to store metadata information for specific files and branches. DONT TOUCH unless you know exactly what you are doing!!',
         };
-
-        return this.uploadBlob(readme)
-          .then(item =>
-            // this.request(`${this.repoURL}/git/trees`, {
-            this.request(`${this.repoURL}/git/pushes`, {  // Azure
-                method: 'POST',
-              body: JSON.stringify({
-                // tree: [{ path: 'README.md', mode: '100644', type: 'blob', sha: item.sha }],
-                refUpdates: [{ name: 'refs/meta/_netlify_001', oldObjectId:"0000000000000000000000000000000000000000" }], 
-                commits: [ { comment: "Initial commit." ,
-                  changes: [ { changeType: "add", item: { path: "/readme.md" }, 
-                  newContent: { contentType: "rawtext", 
-                  content: 
-                  '# Netlify CMS\n\nThis tree is used by the Netlify CMS to store metadata information for specific files and branches.'
-                  } } ] } ]
-              }),
-            }),
-          )
-          // .then(tree => this.commit('First Commit', tree))
-          // .then(response => this.createRef('meta', '_netlify_cms', response.sha))
-          // .then(response => response.object);
-      });
+        console.log('** DEBUG inside checkMetadataRef - we dont have meta/_netlify_cms - create it now')
+          return this.uploadBlobAzure({
+             path: '/readme.md',
+             raw: readme,
+             file: true,
+          }, 'initial create of meta/_netlify_cms', 'meta/_netlify_cms')
+         .then ( response => {
+            console.log ('** DEBUG DEBUG inside checkMetadataRef after creating meta/_netlify_cms: ' + JSON.stringify(response));
+            return response;
+         } );
+        }
+      })
   }
 
   storeMetadata(key, data) {
+    console.log ('** DEBUG entering storeMetadata --  key: '+ key + ' -- data: ' + JSON.stringify(data)  );
     return this.checkMetadataRef().then(branchData => {
       const fileTree = {
         [`${key}.json`]: {
@@ -150,11 +149,14 @@ export default class API {
           file: true,
         },
       };
-
-      return this.uploadBlob(fileTree[`${key}.json`])
-        .then(() => this.updateTree(branchData.sha, '/', fileTree))
-        .then(changeTree => this.commit(`Updating “${key}” metadata`, changeTree))
-        .then(response => this.patchRef('meta', '_netlify_cms', response.sha))
+      console.log ('** DEBUG inside storeMetadata --  fileTree: '+  JSON.stringify(fileTree)  );
+      console.log ('** DEBUG inside storeMetadata --  key: '+ key + ' -- data: ' + JSON.stringify(data)  );
+      console.log ('**** DEBUG inside storeMetadata --  branchData: '+  JSON.stringify( branchData ) );
+      return this.uploadBlobAzure(fileTree[`${key}.json`], `Updating “${key}” metadata`, 'meta/_netlify_cms')
+        //.then(() => this.updateTree(branchData.sha, '/', fileTree))
+        .then(changeTree => console.log ('**** DEBUG inside storeMetadata --  changeTree: ' + JSON.stringify(changeTree) ) )
+        // this.commit(`Updating “${key}” metadata`, changeTree);
+        // .then(response => this.patchRef('meta', '_netlify_cms', response.sha))
         .then(() => {
           localForage.setItem(`gh.meta.${key}`, {
             expires: Date.now() + 300000, // In 5 minutes
@@ -166,6 +168,7 @@ export default class API {
 
   retrieveMetadata(key) {
     const cache = localForage.getItem(`gh.meta.${key}`);
+    console.log ('** DEBUG retrieveMetadata --  key: '+ `gh.meta.${key}` );
     return cache.then(cached => {
       if (cached && cached.expires > Date.now()) {
         return cached.data;
@@ -174,8 +177,9 @@ export default class API {
         '%c Checking for MetaData files',
         'line-height: 30px;text-align: center;font-weight: bold',
       );
-      return this.request(`${this.repoURL}/items/${key}.json`, {
-        params: { version: 'refs/meta/_netlify_cms' },
+      return this.request(`${this.repoURL}/items`, {
+        // params: { version: 'refs/meta/_netlify_cms', path: `${key}.json` },
+        params: { version: 'meta/_netlify_cms', path: `${key}.json` },
         headers: { Accept: 'application/vnd.github.VERSION.raw' },
         cache: 'no-store',
       })
@@ -215,6 +219,7 @@ export default class API {
   }
 
   getBlob(sha, url) { // In Azure we don't have the ObjectId = sha handy always - caution !
+    console.log ('** DEBUG entering getBlob: sha: ' + sha + ' -- url: ' + url );
     // Azure - disable caching as long as we cannot ensure a valid ObjId = sha always
     // return localForage.getItem(`gh.${sha}`).then(cached => {
     //  if (cached) {
@@ -232,6 +237,7 @@ export default class API {
   }
 
   listFiles(path) {
+    console.log ('** DEBUG entering listFiles: path: ' ); 
     // return this.request(`${this.repoURL}/contents/${path.replace(/\/$/, '')}`, {
     return this.request(`${this.repoURL}/items/`, { // Azure
         // params: { ref: this.branch },
@@ -320,11 +326,14 @@ export default class API {
    * concept of entry "status". Useful for things like deploy preview links.
    */
   async getStatuses(sha) {
-    const resp = await this.request(`${this.repoURL}/commits/${sha}/status`);
-    return resp.statuses;
+    // const resp = await this.request(`${this.repoURL}/commits/${sha}/status`); // github
+    const resp = await this.request(`${this.repoURL}/commits/${sha}`); // Azure
+    // return resp.statuses;
+    return [];
   }
 
   composeFileTree(files) {
+    console.log ('** DEBUG entering composeFileTree - files: ' + JSON.stringify (files) );
     let filename;
     let part;
     let parts;
@@ -351,6 +360,7 @@ export default class API {
   }
 
   persistFiles(entry, mediaFiles, options) {
+    console.log ('** DEBUG entering persistFiles - entry: ' + JSON.stringify(entry) + ' -- mediafiles: ' + mediaFiles + ' -- options: ' + JSON.stringify(options) );
     const uploadPromises = [];
     const files = entry ? mediaFiles.concat(entry) : mediaFiles;
 
@@ -358,25 +368,32 @@ export default class API {
       if (file.uploaded) {
         return;
       }
-      uploadPromises.push(this.uploadBlob(file));
+      uploadPromises.push(this.uploadBlobAzure(file, options.commitMessage ));
     });
 
-    const fileTree = this.composeFileTree(files);
+    const fileTree = this.composeFileTree(files); 
+    console.log('*** DEBUG inside persistFiles - fileTree: ' + JSON.stringify(fileTree) );
 
+    /// return Promise.all(uploadPromises);
+    // this block req rework in Azure
     return Promise.all(uploadPromises).then(() => {
+      console.log('*** DEBUG inside persistFiles - Promise.all: uploadPromises: ' + JSON.stringify(uploadPromises)  );
       if (!options.useWorkflow) {
         return this.getBranch()
-          .then(branchData => this.updateTree(branchData.commit.sha, '/', fileTree))
-          .then(changeTree => this.commit(options.commitMessage, changeTree))
-          .then(response => this.patchBranch(this.branch, response.sha));
-      } else {
-        const mediaFilesList = mediaFiles.map(file => ({ path: file.path, sha: file.sha }));
-        return this.editorialWorkflowGit(fileTree, entry, mediaFilesList, options);
+        //    .then(branchData => this.updateTree(branchData.commit.sha, '/', fileTree))
+        .then(branchData => console.log('*** DEBUG inside persistFiles - branchData: ' + JSON.stringify(branchData)))
+        //    .then(changeTree => this.commit(options.commitMessage, changeTree))
+        .then(response => this.patchBranch(this.branch, response.sha));
+        } else {
+         const mediaFilesList = mediaFiles.map(file => ({ path: file.path, sha: file.sha }));
+         console.log('*** DEBUG inside persistFiles - else - file : ' );
+         return this.editorialWorkflowGit(fileTree, entry, mediaFilesList, options);
       }
-    });
+      });
   }
 
   deleteFile(path, message, options = {}) {
+    console.log ('** DEBUG entering deleteFile - path: ' + path + ' --message: ' + message + ' -- options: ' + options);
     const branch = options.branch || this.branch;
     const pathArray = path.split('/');
     const filename = last(pathArray);
@@ -404,30 +421,33 @@ export default class API {
   }
 
   editorialWorkflowGit(fileTree, entry, filesList, options) {
+    console.log ('** DEBUG entering editorialWorkflowGit -  fileTree: ' + JSON.stringify (fileTree) + ' --entry: '+ JSON.stringify (entry ));
     const contentKey = entry.slug;
     const branchName = this.generateBranchName(contentKey);
     const unpublished = options.unpublished || false;
     if (!unpublished) {
       // Open new editorial review workflow for this entry - Create new metadata and commit to new branch`
+      console.log ('** DEBUG inside editorialWorkflowGit -  Create new metadata and commit to new branch '  );
       let prResponse;
 
-      return this.getBranch()
-        .then(branchData => this.updateTree(branchData.commit.sha, '/', fileTree))
-        .then(changeTree => this.commit(options.commitMessage, changeTree))
-        .then(commitResponse => this.createBranch(branchName, commitResponse.sha))
-        .then(() => this.createPR(options.commitMessage, branchName))
-        .then(pr => {
-          prResponse = pr;
-          return this.user();
-        })
-        .then(user => {
+      // return this.getBranch()
+        // .then(branchData => this.updateTree(branchData.commit.sha, '/', fileTree))
+        // .then(changeTree => this.commit(options.commitMessage, changeTree))
+        // .then(commitResponse => this.createBranch(branchName, commitResponse.sha))
+        // .then(() => this.createPR(options.commitMessage, branchName))
+        // .then(pr => {
+        //  prResponse = pr;
+        //  return this.user();
+        // })
+        // .then(user => {
           return this.storeMetadata(contentKey, {
             type: 'PR',
             pr: {
-              number: prResponse.number,
-              head: prResponse.head && prResponse.head.sha,
+              number: 'prResponse.number',
+        //      head: 'prResponse.head && prResponse.head.sha',
+              head: '4f9035742b11fef32efcc8e226b60866597dfca4',
             },
-            user: user.name || user.login,
+            user: 'user.name || user.login',
             status: this.initialWorkflowStatus,
             branch: branchName,
             collection: options.collectionName,
@@ -436,30 +456,32 @@ export default class API {
             objects: {
               entry: {
                 path: entry.path,
-                sha: entry.sha,
+                sha: 'entry.sha',
               },
               files: filesList,
             },
             timeStamp: new Date().toISOString(),
           });
-        });
+        // });
     } else {
       // Entry is already on editorial review workflow - just update metadata and commit to existing branch
       let newHead;
-      return this.getBranch(branchName)
-        .then(branchData => this.updateTree(branchData.commit.sha, '/', fileTree))
-        .then(changeTree => this.commit(options.commitMessage, changeTree))
-        .then(commit => {
-          newHead = commit;
-          return this.retrieveMetadata(contentKey);
-        })
+      console.log ('** DEBUG inside editorialWorkflowGit -  just update metadata and commit to existing branch'  );
+      // return this.getBranch(branchName)
+      //  .then(branchData => this.updateTree(branchData.commit.sha, '/', fileTree))
+      //  .then(changeTree => this.commit(options.commitMessage, changeTree))
+      //  .then(commit => {
+      //    newHead = commit;
+      //    return this.retrieveMetadata(contentKey);
+      //  })
+        return this.retrieveMetadata(contentKey)
         .then(metadata => {
           const { title, description } = options.parsedData || {};
           const metadataFiles = get(metadata.objects, 'files', []);
           const files = [...metadataFiles, ...filesList];
-          const pr = { ...metadata.pr, head: newHead.sha };
+          const pr = { ...metadata.pr, head: 'newHead.sha' };
           const objects = {
-            entry: { path: entry.path, sha: entry.sha },
+            entry: { path: entry.path, sha: 'entry.sha' },
             files: uniq(files),
           };
           const updatedMetadata = { ...metadata, pr, title, description, objects };
@@ -479,7 +501,7 @@ export default class API {
            * repo, which means pull requests opened for editorial workflow
            * entries must be rebased if assets have been added or removed.
            */
-          return this.rebasePullRequest(pr.number, branchName, contentKey, metadata, newHead);
+          // return this.rebasePullRequest(pr.number, branchName, contentKey, metadata, newHead);
         });
     }
   }
@@ -490,6 +512,7 @@ export default class API {
    * in the entry file.
    */
   async rebasePullRequest(prNumber, branchName, contentKey, metadata, head) {
+    console.log ('** DEBUG entering rebasePullRequest - prNumber: ' + prNumber );
     const { path } = metadata.objects.entry;
 
     try {
@@ -530,6 +553,7 @@ export default class API {
    * expected to change the same, single blob.
    */
   rebaseSingleBlobCommits(baseCommit, commits, pathToBlob) {
+    console.log ('** DEBUG entering rebaseSingleBlobCommits - baseCommit: ' + baseCommit );
     /**
      * If the parent of the first commit already matches the target base,
      * return commits as is.
@@ -565,6 +589,7 @@ export default class API {
    * Rebase a commit that changes a single blob. Also handles updating the tree.
    */
   rebaseSingleBlobCommit(baseCommit, commit, pathToBlob) {
+    console.log ('** DEBUG entering rebaseSingleBlobCommit - baseCommit: ' +  baseCommit );
     /**
      * Retain original commit metadata.
      */
@@ -599,6 +624,7 @@ export default class API {
    * Get a pull request by PR number.
    */
   getPullRequest(prNumber) {
+    console.log ('** DEBUG entering getPullRequest - prNumber: ' + prNumber );
     return this.request(`${this.repoURL}/pulls/${prNumber} }`);
   }
 
@@ -606,6 +632,7 @@ export default class API {
    * Get the list of commits for a given pull request.
    */
   getPullRequestCommits(prNumber) {
+    console.log ('** DEBUG entering getPullRequestCommits - prNumber: ' +  prNumber );
     return this.request(`${this.repoURL}/pulls/${prNumber}/commits`);
   }
 
@@ -615,6 +642,7 @@ export default class API {
    * already the last commit in `commits`. Otherwise throws an error.
    */
   assertHead(commits, headToAssert) {
+    console.log ('** DEBUG entering assertHead - type: ' );
     const headIsMissing = headToAssert.parents[0].sha === last(commits).sha;
     const headIsNotMissing = headToAssert.sha === last(commits).sha;
 
@@ -628,6 +656,7 @@ export default class API {
   }
 
   updateUnpublishedEntryStatus(collection, slug, status) {
+    console.log ('** DEBUG entering updateUnpublishedEntryStatus - type: ' );
     const contentKey = slug;
     return this.retrieveMetadata(contentKey)
       .then(metadata => ({
@@ -638,6 +667,7 @@ export default class API {
   }
 
   deleteUnpublishedEntry(collection, slug) {
+    console.log ('** DEBUG entering deleteUnpublishedEntry - type: ' );
     const contentKey = slug;
     const branchName = this.generateBranchName(contentKey);
     return (
@@ -657,6 +687,7 @@ export default class API {
   }
 
   publishUnpublishedEntry(collection, slug) {
+    console.log ('** DEBUG entering publishUnpublishedEntry - collection: ' + collection + ' -- slug: ' + slug );
     const contentKey = slug;
     const branchName = this.generateBranchName(contentKey);
     return this.retrieveMetadata(contentKey)
@@ -665,13 +696,75 @@ export default class API {
   }
 
   createRef(type, name, sha) {
-    return this.request(`${this.repoURL}/git/refs`, {
-      method: 'POST',
-      body: JSON.stringify({ ref: `refs/${type}/${name}`, sha }),
-    });
+    console.log ('** DEBUG entering createRef - type: ' + type + ' -- name: ' + name + ' --sha: ' + sha );
+    // return this.request(`${this.repoURL}/git/refs`, {
+    // return this.request(`${this.repoURL}/refs`, { // Azure - need to get the CommitId first...
+    //     params: { filter: 'meta%2F_netlify_cms'}
+    // }).then ( response => {
+      return this.request(`${this.repoURL}/pushes`, { // Azure ... then create a new ref item
+        method: 'POST',
+        body: JSON.stringify({ 
+          // ref: `refs/${type}/${name}`, sha
+          // refUpdates: [{ name: `refs/${type}/${name}`, oldObjectId: response.objectId }], 
+          refUpdates: [{ name: `refs/${type}/${name}`, oldObjectId: "0000000000000000000000000000000000000000" }], 
+          commits: [ { comment: "Initial commit." ,
+            changes: [ { changeType: "add", item: { path: sha }, 
+            newContent: { contentType: "rawtext", 
+            content: `{ sha: ${sha}, type: "commit", url: "https://something" }`
+          } } ] } ]
+         }),
+    // });
+    })
   }
 
   patchRef(type, name, sha, opts = {}) {
+    console.log ('** DEBUG entering patchRef - type: ' + type + ' -- name: ' + name + ' --sha: ' + sha + ' --opts: ' + JSON.stringify(opts));
+    const force = opts.force || false;
+    // return this.request(`${this.repoURL}/git/refs`, {
+    return this.request(`${this.repoURL}/refs`, { // Azure - need to get the CommitId first...
+         params: { filter: `${type}/${name}`}
+     }).then ( response => {
+      return this.request(`${this.repoURL}/pushes`, { // Azure ... then create a new ref item
+        method: 'POST',
+        body: JSON.stringify({ 
+          // ref: `refs/${type}/${name}`, sha
+          refUpdates: [{ name: `refs/${type}/${name}`, oldObjectId: response.objectId }], 
+          commits: [ { comment: "object update" ,
+            changes: [ { changeType: "edit", item: { path: sha }, 
+            newContent: { contentType: "rawtext", 
+            content: `{ sha: ${sha}, type: "commit", url: "https://something" }`
+          } } ] } ]
+        }),
+     });
+    }).catch(err => {
+      console.log ('** DEBUG ERR in patchRef - error: ' + JSON.stringify(err));
+      throw Error('caught err in patchRef');
+    })
+  }
+
+  deleteRefGH(type, name) {
+    console.log ('** DEBUG entering deleteRef - type: ' + type + ' -- name: ' + name  );
+    return this.request(`${this.repoURL}/refs`, { // Azure - need to get the CommitId first...
+         params: { filter: `${type}/${name}`}
+     }).then ( response => {
+      return this.request(`${this.repoURL}/pushed`, { // Azure ... then del ref item
+        method: 'POST',
+        body: JSON.stringify({ 
+          // ref: `refs/${type}/${name}`, sha
+          refUpdates: [{ name: `refs/${type}/${name}`, oldObjectId: response.objectId }], 
+          commits: [ { comment: "object delete" ,
+            changes: [ { changeType: "delete", item: { path: sha }, 
+          } ] } ]
+        }),
+     });
+    }).catch(err => {
+      console.log ('** DEBUG ERR in patchRef - error: ' + JSON.stringify(err));
+      throw Error('caught err in patchRef');
+    })
+  }
+
+  patchRefGH(type, name, sha, opts = {}) {
+    console.log ('** DEBUG entering patchRef - type: ' + type + ' -- name: ' + name + ' --sha: ' + sha + ' --opts: ' + JSON.stringify(opts));
     const force = opts.force || false;
     return this.request(`${this.repoURL}/git/refs/${type}/${encodeURIComponent(name)}`, {
       method: 'PATCH',
@@ -679,25 +772,30 @@ export default class API {
     });
   }
 
-  deleteRef(type, name) {
+  deleteRefGH(type, name) {
+    console.log ('** DEBUG entering deleteRef - type: ' + type + ' -- name: ' + name  );
     return this.request(`${this.repoURL}/git/refs/${type}/${encodeURIComponent(name)}`, {
       method: 'DELETE',
     });
   }
 
   getBranch(branch = this.branch) {
+    console.log ('** DEBUG entering getBranch - branch: ' + branch );
     return this.request(`${this.repoURL}/branches/${encodeURIComponent(branch)}`);
   }
 
   createBranch(branchName, sha) {
+    console.log ('** DEBUG entering createBranch - branchName: ' + branchName + ' -- sha: ' + sha );
     return this.createRef('heads', branchName, sha);
   }
 
   assertCmsBranch(branchName) {
+    console.log ('** DEBUG entering ssertCmsBranch - branchName: ' + branchName  );
     return branchName.startsWith(CMS_BRANCH_PREFIX);
   }
 
   patchBranch(branchName, sha, opts = {}) {
+    console.log ('** DEBUG entering createBranch - branchName: ' + branchName + ' -- sha: ' + sha + ' -- opts: ' + JSON.stringify(opts) );
     const force = opts.force || false;
     if (force && !this.assertCmsBranch(branchName)) {
       throw Error(`Only CMS branches can be force updated, cannot force update ${branchName}`);
@@ -706,6 +804,7 @@ export default class API {
   }
 
   deleteBranch(branchName) {
+    console.log ('** DEBUG entering deleteBranch - branchName: ' + branchName  );
     return this.deleteRef('heads', branchName);
   }
 
@@ -794,25 +893,114 @@ export default class API {
     return Promise.resolve(Base64.encode(str));
   }
 
-  uploadBlob(item) {
+  uploadBlobAzure(item, commitMsg = "no info", branchName  ) {
+    console.log('** DEBUG entering uploadBlobAzure item: ' + JSON.stringify(item));
     const content = result(item, 'toBase64', partial(this.toBase64, item.raw));
-
-    return content.then(contentBase64 =>
-      this.request(`${this.repoURL}/git/blobs`, {
-        method: 'POST',
+    const branch = (typeof branchName  === "undefined") ? this.generateBranchName(item.slug) : branchName;
+    let changeType ;
+    let refsheads ;
+    let commitId;
+    
+    // check if we already have an edited version in a cms-branch 
+    return this.getAzureId( item.path, branch )
+    .then ( azureIds => {
+      console.log('** DEBUG inside uploadBlobAzure azureIds: ' + JSON.stringify(azureIds));
+      if (typeof azureIds.commitId  === "undefined") {
+        changeType = "add"; commitId = "0000000000000000000000000000000000000000";
+      }  else {
+        changeType = "edit"; commitId = azureIds.commitId;      
+      }
+      refsheads = `refs/heads/${branch}`;
+    // })
+      // adjust commitId in special case that branch == meta and branch already exists
+      // CAUTION - the following call should be "await"
+      console.log('** DEBUG inside uploadBlobAzure check to adjust MetaID - branch: ' + branch );
+      if ( branch.startsWith('meta')) {
+        // commitId = await this.getAzureMetaId();
+        commitId =  this.getAzureMetaId();
+      }
+      content.then(contentBase64 =>
+      // this.request(`${this.repoURL}/git/blobs`, {
+        this.request(`${this.repoURL}/pushes`, {
+          method: 'POST',
         body: JSON.stringify({
-          content: contentBase64,
-          encoding: 'base64',
-        }),
-      }).then(response => {
+          refUpdates: [{ name: refsheads, oldObjectId: commitId }], 
+          commits: [ { comment: commitMsg,
+            changes: [ { changeType: changeType, item: { path: item.path }, 
+            newContent: { contentType: "base64encoded", 
+            content: contentBase64
+            } } ] } ]
+          }),
+    }).then(response => {
         item.sha = response.sha;
         item.uploaded = true;
         return item;
       }),
     );
+    })
+    .catch(err => {
+      console.log('** DEBUG inside uploadBlobAzure - catch err: ' + err );
+    })
   }
 
+
+  uploadBlobOld(item) {
+    console.log ('** DEBUG entering uploadBlob - item: ' + JSON.stringify(item));
+    const content = result(item, 'toBase64', partial(this.toBase64, item.raw));
+    const branch =  this.generateBranchName(item.slug);
+    const refsheads = 'refs/heads/' + branch;
+
+    // check if we already have an edited version in a cms-branch 
+    const azureIds = this.getAzureId( item.path, branch )
+    // const azureIds = this.getAzureId( item.path, this.CMS_BRANCH_PREFIX + item.slug )
+    // const azureIds = this.getAzureId( item.path, 'cms/' + item.slug )
+    .then ( response => {
+      console.log ('** DEBUG within uploadBlob - update existing entry: ' + JSON.stringify(response));
+
+      return content.then(contentBase64 =>
+        // this.request(`${this.repoURL}/git/blobs`, {
+        this.request(`${this.repoURL}/pushes`, {
+            method: 'POST',
+          body: JSON.stringify({
+            refUpdates: [{ name: refsheads, oldObjectId: response.commitId }], 
+            commits: [ { comment: "another update." ,
+              changes: [ { changeType: "edit", item: { path: item.path }, 
+              newContent: { contentType: "rawtext", 
+              content: item.raw
+              } } ] } ]
+            }),
+        }).then(response => {
+          // item.sha = response.sha; // github
+          item.sha = response.objectId; // Azure
+          item.uploaded = true;
+          return item;
+        }),
+      );
+      })
+      .catch(error => {
+        console.log ('** DEBUG inside uploadBlob - we dont have an edited version already so create one now: ' + JSON.stringify( error ) );
+        // throw new APIError(error.message, responseStatus, 'Azure');
+        this.request(`${this.repoURL}/pushes`, {  // Azure
+          method: 'POST',
+        body: JSON.stringify({
+          refUpdates: [{ name: refsheads, oldObjectId:"0000000000000000000000000000000000000000" }], 
+          commits: [ { comment: "Initial commit." ,
+            changes: [ { changeType: "add", item: { path: item.path }, 
+            newContent: { contentType: "rawtext", 
+            content: item.raw
+            } } ] } ]
+        }),
+      }).then(response => {
+        item.sha = response.objectId; // Azure
+        item.uploaded = true;
+        return item;
+      })
+      });
+   }
+
   updateTree(sha, path, fileTree) {
+    console.log ('** DEBUG entering updateTree - sha: ' + sha + ' -- path: ' + path + ' --fileTree: ' + JSON.stringify(item));
+    // before we do anything else we recursively get the full tree
     return this.getTree(sha).then(tree => {
       let obj;
       let filename;
@@ -891,9 +1079,31 @@ export default class API {
   // this function is to get the ObjectId and CommitId (output)
   // from path and branch (input)
   getAzureId(path, branch = this.branch ) {
+    console.log ('** DEBUG entering getAzureId - path: ' + path + ' -- branch: ' + branch );
     return this.request(`${this.repoURL}/items`, {
-      params: { version: this.branch, path: path,
+      params: { version: branch, path: path,
         '$format': "json", versionType: "Branch", versionOptions: "None" } // Azure hardwired to get expected response format   
+    }).then ( response => {
+      console.log ('** DEBUG within getAzureId - response: ' + JSON.stringify( response ));
+      return response;
+    })
+    .catch(err => {
+      console.log ('** DEBUG inside getAzureId - error: ' + err  );
+      return err;
     });
+  }
+
+  async getAzureMetaId() {
+    let commitId;
+    return this.request( `${this.repoURL}/refs/heads/meta/_netlify_cms` )
+    .then( response => {
+      console.log ('** DEBUG within getMetaId - adjust meta response: ' + JSON.stringify( response ));
+      if ( response.count > 0 ) { 
+        const value = response.value[0] ;
+        console.log ('** DEBUG within getMetaId - updated meta commitId: ' + value.objectId );
+        commitId = value.objectId;
+      } else { commitId = "0" }
+      return commitId;
+    } )     
   }
 }
