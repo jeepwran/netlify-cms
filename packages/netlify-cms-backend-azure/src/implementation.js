@@ -92,8 +92,12 @@ export default class Azure {
   entriesByFolder(collection, extension) {
     return this.api
       .listFiles(collection.get('folder'))
-      .then(files => files.filter(file => file.name.endsWith('.' + extension)))
-      .then(this.fetchFiles);
+      .then(files => { // Azure - de-activate filter for debug
+        // files.filter(file => file.name.endsWith('.' + extension)))
+        console.log('IMPL files-liste: ' + JSON.stringify (files ) );
+        return files;
+      })
+    .then(this.fetchFiles);
   }
 
   entriesByFiles(collection) {
@@ -108,11 +112,15 @@ export default class Azure {
     const sem = semaphore(MAX_CONCURRENT_DOWNLOADS);
     const promises = [];
     files.forEach(file => {
+      console.log('** DEBUG fetchFiles ... file.url: ' + file.url );
+      file.sha = file.objectId; // due to different element naming in Azure
+      file.path = file.relativePath;
       promises.push(
         new Promise(resolve =>
           sem.take(() =>
             this.api
-              .readFile(file.path, file.sha)
+              // .readFile(file.path, file.sha)
+              .readFile(file.url, file.objectId) // Azure
               .then(data => {
                 resolve({ file, data });
                 sem.leave();
@@ -141,12 +149,16 @@ export default class Azure {
 
   getMedia() {
     return this.api.listFiles(this.config.get('media_folder')).then(files =>
-      files.map(({ sha, name, size, download_url, path }) => {
-        const url = new URL(download_url);
-        if (url.pathname.match(/.svg$/)) {
-          url.search += (url.search.slice(1) === '' ? '?' : '&') + 'sanitize=true';
+      // files.map(({ sha, name, size, download_url, path }) => {
+      files.map(({ objectId, relativePath, size, url, mode }) => { // Azure
+          const sha = objectId;
+	      	const name = relativePath;
+      		const path = 'no-path-here';
+          const url2 = new URL(url);
+        if (url2.pathname.match(/.svg$/)) {
+          url2.search += (url2.search.slice(1) === '' ? '?' : '&') + 'sanitize=true';
         }
-        return { id: sha, name, size, displayURL: url.href, path };
+        return { id: sha, name, size, displayURL: url2.href, path };
       }),
     );
   }
